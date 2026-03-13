@@ -11,7 +11,7 @@ const app  = express();
 const PORT = process.env.PORT || 3000;
 
 // ── ADMIN PASSWORD (set via Render env var) ─────────────
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme123';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 // ── IN-MEMORY STORE (persists until Render restarts) ────
 // For production, swap these objects with a database/KV store.
@@ -23,7 +23,9 @@ let store = {
       items: [
         { id: 'snubby',   name: 'Snubby',   url: 'https://therealsnubby.com/signin.html',          icon: '🎮' },
         { id: 'ggms',     name: 'GGMS',     url: 'https://algebra.learnnexus.one/',                 icon: '🎯' },
+        { id: 'newpr@xy',    name: 'NEW PR@XY!!!!!',    url: 'https://fallbackprox.evanblokender.org',                    icon: '📚' },
         { id: 'truffled', name: 'Truffled', url: 'https://vacation.briaquaticcabinets.com/',        icon: '🍄' },
+        { id: 'eduwing',    name: 'EduWing',    url: 'https://eduwing.org',                    icon: '📚' },
       ]
     },
     {
@@ -41,7 +43,6 @@ let store = {
       items: [
         { id: 'soundboard', name: 'Soundboard', url: 'https://www.myinstants.com/en/index/us/', icon: '🔊' },
         { id: 'chat',       name: 'Chat',       url: 'https://deadsimplechat.com/4rutqgwsq',   icon: '💬' },
-        { id: 'eduwing',    name: 'EduWing',    url: 'https://eduwing.org',                    icon: '📚' },
       ]
     }
   ],
