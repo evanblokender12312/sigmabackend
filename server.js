@@ -23,7 +23,7 @@ let store = {
       items: [
         { id: 'snubby',   name: 'Snubby',   url: 'https://therealsnubby.com/signin.html',          icon: '🎮' },
         { id: 'ggms',     name: 'GGMS',     url: 'https://algebra.learnnexus.one/',                 icon: '🎯' },
-        { id: 'newpr@xy',    name: 'NEW PR@XY!!!!!',    url: 'https://fallbackprox.evanblokender.org',                    icon: '📚' },
+        { id: 'newpr@xy',    name: 'NEW PR@XY!!!!!',    url: 'https://proxfallback.evanblokender.org',                    icon: '📚' },
         { id: 'truffled', name: 'Truffled', url: 'https://vacation.briaquaticcabinets.com/',        icon: '🍄' },
         { id: 'eduwing',    name: 'EduWing',    url: 'https://eduwing.org',                    icon: '📚' },
       ]
