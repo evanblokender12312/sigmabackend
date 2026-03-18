@@ -10,31 +10,29 @@ const crypto  = require('crypto');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ── ADMIN PASSWORD (set via Render env var) ─────────────
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
-// ── IN-MEMORY STORE (persists until Render restarts) ────
-// For production, swap these objects with a database/KV store.
+// ── IN-MEMORY STORE ──────────────────────────────────────
 let store = {
   sections: [
     {
       id: 'games',
       label: 'Games',
       items: [
-        { id: 'snubby',   name: 'Snubby',   url: 'https://therealsnubby.com/signin.html',          icon: '🎮' },
-        { id: 'ggms',     name: 'GGMS',     url: 'https://algebra.learnnexus.one/',                 icon: '🎯' },
-        { id: 'newpr@xy',    name: 'NEW PR@XY!!!!!',    url: 'https://proxfallback.evanblokender.org',                    icon: '📚' },
-        { id: 'truffled', name: 'Truffled', url: 'https://vacation.briaquaticcabinets.com/',        icon: '🍄' },
-        { id: 'eduwing',    name: 'EduWing',    url: 'https://eduwing.org',                    icon: '📚' },
+        { id: 'snubby',   name: 'Snubby',       url: 'https://therealsnubby.com/signin.html',   icon: '🎮' },
+        { id: 'ggms',     name: 'GGMS',         url: 'https://algebra.learnnexus.one/',          icon: '🎯' },
+        { id: 'newprxy',  name: 'NEW PR@XY!!',  url: 'https://proxfallback.evanblokender.org',   icon: '🌀' },
+        { id: 'truffled', name: 'Truffled',     url: 'https://vacation.briaquaticcabinets.com/', icon: '🍄' },
+        { id: 'eduwing',  name: 'EduWing',      url: 'https://eduwing.org',                      icon: '📚' },
       ]
     },
     {
       id: 'cheats',
       label: 'Cheats',
       items: [
-        { id: 'blooket',   name: 'Blooket',   url: 'https://blooketbot.schoolcheats.net',           icon: '🔵' },
-        { id: 'gimkit',    name: 'Gimkit',    url: 'https://gimkitbot.com/',                        icon: '⚡' },
-        { id: 'wayground', name: 'Wayground', url: 'https://waygroundbot.com/answers.html',         icon: '🌐' },
+        { id: 'blooket',   name: 'Blooket',   url: 'https://blooketbot.schoolcheats.net', icon: '🔵' },
+        { id: 'gimkit',    name: 'Gimkit',    url: 'https://gimkitbot.com/',              icon: '⚡' },
+        { id: 'wayground', name: 'Wayground', url: 'https://waygroundbot.com/answers.html', icon: '🌐' },
       ]
     },
     {
@@ -42,18 +40,27 @@ let store = {
       label: 'Tools',
       items: [
         { id: 'soundboard', name: 'Soundboard', url: 'https://www.myinstants.com/en/index/us/', icon: '🔊' },
-        { id: 'chat',       name: 'Chat',       url: 'https://deadsimplechat.com/4rutqgwsq',   icon: '💬' },
+        { id: 'chat',       name: 'Chat',       url: 'https://deadsimplechat.com/4rutqgwsq',    icon: '💬' },
       ]
     }
   ],
 
-  alerts: [],           // { id, message, type, createdAt }
-  banned: new Set(),    // browser fingerprint IDs
+  alerts:  [],          // { id, message, type, createdAt }
+  banned:  new Set(),   // browser fingerprint IDs
+
+  // ── NEW: Global messages ─────────────────────────────
+  globalMessages: [],   // { id, message, createdAt }  — auto-expire 15s on client
+
+  // ── NEW: Presence / active users ─────────────────────
+  // fingerprintId → { id, nickname, currentPage, isFullscreen, lastSeen, screenshot }
+  presence: new Map(),
 };
+
+const PRESENCE_TIMEOUT = 20000; // 20s without heartbeat = offline
 
 // ── MIDDLEWARE ───────────────────────────────────────────
 app.use(cors({ origin: '*' }));
-app.use(express.json());
+app.use(express.json({ limit: '4mb' })); // screenshots can be large
 
 // ── HELPERS ──────────────────────────────────────────────
 function uid() {
@@ -68,25 +75,79 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function getActivePresence() {
+  const now = Date.now();
+  const out = [];
+  for (const [id, p] of store.presence.entries()) {
+    if (now - p.lastSeen < PRESENCE_TIMEOUT) {
+      out.push({ ...p, id });
+    } else {
+      store.presence.delete(id);
+    }
+  }
+  return out;
+}
+
 // ── PUBLIC ROUTES ────────────────────────────────────────
 
-// Health check
 app.get('/', (req, res) => {
-  res.json({ ok: true, service: 'Portal Backend' });
+  res.json({ ok: true, service: 'Portal Backend v2' });
 });
 
-// Get all sections + active alerts (what the client loads on boot)
+// Boot data for clients
 app.get('/api/data', (req, res) => {
   const fingerprintId = req.headers['x-fingerprint'] || '';
   const banned = store.banned.has(fingerprintId);
   res.json({
     sections: store.sections,
-    alerts: store.alerts,
+    alerts:   store.alerts,
     banned,
+    globalMessages: store.globalMessages,
   });
 });
 
-// Admin login — returns success/fail (password is the token itself)
+// ── PRESENCE (heartbeat) ─────────────────────────────────
+
+// Client sends heartbeat every 5s
+app.post('/api/presence', (req, res) => {
+  const fid = req.headers['x-fingerprint'] || req.body.id || uid();
+  if (store.banned.has(fid)) return res.json({ ok: true, banned: true });
+
+  const existing = store.presence.get(fid) || {};
+  store.presence.set(fid, {
+    ...existing,
+    id:          fid,
+    nickname:    req.body.nickname    || existing.nickname    || 'User',
+    currentPage: req.body.currentPage || existing.currentPage || 'Home',
+    isFullscreen:req.body.isFullscreen ?? existing.isFullscreen ?? false,
+    isAdmin:     req.body.isAdmin     ?? existing.isAdmin     ?? false,
+    lastSeen:    Date.now(),
+    // screenshot only updated when provided
+    screenshot:  req.body.screenshot  || existing.screenshot  || null,
+  });
+
+  // Return new global messages since client's last seen id
+  const lastId = req.body.lastGlobalMsgId || null;
+  let msgs = store.globalMessages;
+  if (lastId) {
+    const idx = msgs.findIndex(m => m.id === lastId);
+    msgs = idx >= 0 ? msgs.slice(idx + 1) : msgs;
+  }
+
+  res.json({ ok: true, newMessages: msgs });
+});
+
+// Client posts screenshot blob (base64 dataURL)
+app.post('/api/presence/screenshot', (req, res) => {
+  const fid = req.headers['x-fingerprint'] || req.body.id;
+  if (!fid || !store.presence.has(fid)) return res.json({ ok: false });
+  const p = store.presence.get(fid);
+  p.screenshot  = req.body.screenshot;
+  p.lastSeen    = Date.now();
+  res.json({ ok: true });
+});
+
+// Admin login
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
   if (password === ADMIN_PASSWORD) {
@@ -96,14 +157,41 @@ app.post('/api/admin/login', (req, res) => {
   }
 });
 
+// ── ADMIN — PRESENCE ─────────────────────────────────────
+
+app.get('/api/admin/presence', requireAdmin, (req, res) => {
+  res.json(getActivePresence());
+});
+
+// ── ADMIN — GLOBAL MESSAGES ──────────────────────────────
+
+app.get('/api/admin/global-messages', requireAdmin, (req, res) => {
+  res.json(store.globalMessages);
+});
+
+app.post('/api/admin/global-messages', requireAdmin, (req, res) => {
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: 'message required' });
+  const msg = { id: uid(), message, createdAt: Date.now() };
+  store.globalMessages.push(msg);
+  // Auto-remove from server after 30s (client shows for 15s)
+  setTimeout(() => {
+    store.globalMessages = store.globalMessages.filter(m => m.id !== msg.id);
+  }, 30000);
+  res.json(msg);
+});
+
+app.delete('/api/admin/global-messages/:id', requireAdmin, (req, res) => {
+  store.globalMessages = store.globalMessages.filter(m => m.id !== req.params.id);
+  res.json({ ok: true });
+});
+
 // ── ADMIN — SECTIONS ─────────────────────────────────────
 
-// Get sections (admin view)
 app.get('/api/admin/sections', requireAdmin, (req, res) => {
   res.json(store.sections);
 });
 
-// Add section
 app.post('/api/admin/sections', requireAdmin, (req, res) => {
   const { label, icon } = req.body;
   if (!label) return res.status(400).json({ error: 'label required' });
@@ -112,13 +200,11 @@ app.post('/api/admin/sections', requireAdmin, (req, res) => {
   res.json(section);
 });
 
-// Delete section
 app.delete('/api/admin/sections/:id', requireAdmin, (req, res) => {
   store.sections = store.sections.filter(s => s.id !== req.params.id);
   res.json({ ok: true });
 });
 
-// Update section label/icon
 app.patch('/api/admin/sections/:id', requireAdmin, (req, res) => {
   const section = store.sections.find(s => s.id === req.params.id);
   if (!section) return res.status(404).json({ error: 'Not found' });
@@ -127,9 +213,8 @@ app.patch('/api/admin/sections/:id', requireAdmin, (req, res) => {
   res.json(section);
 });
 
-// ── ADMIN — PAGES (items inside a section) ───────────────
+// ── ADMIN — PAGES ─────────────────────────────────────────
 
-// Add page to section
 app.post('/api/admin/sections/:sectionId/pages', requireAdmin, (req, res) => {
   const section = store.sections.find(s => s.id === req.params.sectionId);
   if (!section) return res.status(404).json({ error: 'Section not found' });
@@ -140,7 +225,6 @@ app.post('/api/admin/sections/:sectionId/pages', requireAdmin, (req, res) => {
   res.json(item);
 });
 
-// Delete page from section
 app.delete('/api/admin/sections/:sectionId/pages/:pageId', requireAdmin, (req, res) => {
   const section = store.sections.find(s => s.id === req.params.sectionId);
   if (!section) return res.status(404).json({ error: 'Section not found' });
@@ -148,7 +232,6 @@ app.delete('/api/admin/sections/:sectionId/pages/:pageId', requireAdmin, (req, r
   res.json({ ok: true });
 });
 
-// Update page
 app.patch('/api/admin/sections/:sectionId/pages/:pageId', requireAdmin, (req, res) => {
   const section = store.sections.find(s => s.id === req.params.sectionId);
   if (!section) return res.status(404).json({ error: 'Section not found' });
@@ -162,45 +245,34 @@ app.patch('/api/admin/sections/:sectionId/pages/:pageId', requireAdmin, (req, re
 
 // ── ADMIN — ALERTS ───────────────────────────────────────
 
-// Get all alerts
 app.get('/api/admin/alerts', requireAdmin, (req, res) => {
   res.json(store.alerts);
 });
 
-// Send global alert
 app.post('/api/admin/alerts', requireAdmin, (req, res) => {
   const { message, type } = req.body;
   if (!message) return res.status(400).json({ error: 'message required' });
-  const alert = {
-    id: uid(),
-    message,
-    type: type || 'info',   // info | warning | danger
-    createdAt: Date.now(),
-  };
+  const alert = { id: uid(), message, type: type || 'info', createdAt: Date.now() };
   store.alerts.push(alert);
   res.json(alert);
 });
 
-// Delete alert
 app.delete('/api/admin/alerts/:id', requireAdmin, (req, res) => {
   store.alerts = store.alerts.filter(a => a.id !== req.params.id);
   res.json({ ok: true });
 });
 
-// Clear all alerts
 app.delete('/api/admin/alerts', requireAdmin, (req, res) => {
   store.alerts = [];
   res.json({ ok: true });
 });
 
-// ── ADMIN — BAN MANAGEMENT ───────────────────────────────
+// ── ADMIN — BANS ─────────────────────────────────────────
 
-// List banned IDs
 app.get('/api/admin/bans', requireAdmin, (req, res) => {
   res.json([...store.banned]);
 });
 
-// Ban a fingerprint ID
 app.post('/api/admin/bans', requireAdmin, (req, res) => {
   const { fingerprintId } = req.body;
   if (!fingerprintId) return res.status(400).json({ error: 'fingerprintId required' });
@@ -208,13 +280,11 @@ app.post('/api/admin/bans', requireAdmin, (req, res) => {
   res.json({ ok: true, banned: fingerprintId });
 });
 
-// Unban a fingerprint ID
 app.delete('/api/admin/bans/:id', requireAdmin, (req, res) => {
   store.banned.delete(req.params.id);
   res.json({ ok: true });
 });
 
-// Clear all bans
 app.delete('/api/admin/bans', requireAdmin, (req, res) => {
   store.banned.clear();
   res.json({ ok: true });
@@ -222,6 +292,6 @@ app.delete('/api/admin/bans', requireAdmin, (req, res) => {
 
 // ── START ─────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`Portal backend running on port ${PORT}`);
-  console.log(`Admin password loaded: ${ADMIN_PASSWORD !== 'changeme123' ? '✓ (from env)' : '⚠ using default — set ADMIN_PASSWORD env var'}`);
+  console.log(`Portal backend v2 running on port ${PORT}`);
+  console.log(`Admin password: ${ADMIN_PASSWORD !== 'changeme123' ? '✓ (from env)' : '⚠ using default'}`);
 });
